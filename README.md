@@ -1780,6 +1780,10 @@ require('lualine').setup {
 - **MinuetRequestStarted**: Triggered immediately after the completion request
   is dispatched, signaling that the request is in progress.
 - **MinuetRequestFinished**: Triggered upon completion of the request.
+- **MinuetRequestUsage**: Triggered after a response has been read, when the API
+  reported token counts. The event data has `name`, `input_tokens` and
+  `output_tokens` (either count may be missing). The event is not sent when the
+  response has no usage information.
 
 ### Duet Events
 

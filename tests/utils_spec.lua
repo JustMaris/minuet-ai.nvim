@@ -30,6 +30,68 @@ return {
         end,
     },
     {
+        name = 'utils.stream_decode reports Claude token usage in MinuetRequestUsage',
+        run = function()
+            helpers.setup_root_config()
+
+            local utils = helpers.reload 'minuet.utils'
+            local events = {}
+            local group = vim.api.nvim_create_augroup('MinuetUsageTest', { clear = true })
+            vim.api.nvim_create_autocmd('User', {
+                group = group,
+                pattern = 'MinuetRequestUsage',
+                callback = function(args)
+                    table.insert(events, args.data)
+                end,
+            })
+
+            local stdout = table.concat({
+                'event: message_start',
+                'data: {"type":"message_start","message":{"usage":{"input_tokens":1200,"output_tokens":1}}}',
+                'data: {"type":"content_block_delta","delta":{"text":"hi"}}',
+                'data: {"type":"message_delta","usage":{"output_tokens":37}}',
+            }, '\n')
+
+            local text = utils.stream_decode({ code = 0, stdout = stdout }, vim.fn.tempname(), 'Claude', function(json)
+                return json.delta.text
+            end)
+            vim.api.nvim_del_augroup_by_id(group)
+
+            helpers.expect_equal(text, 'hi')
+            helpers.expect_equal(events, { { name = 'Claude', input_tokens = 1200, output_tokens = 37 } })
+        end,
+    },
+    {
+        name = 'utils.no_stream_decode reports OpenAI-style token usage in MinuetRequestUsage',
+        run = function()
+            helpers.setup_root_config()
+
+            local utils = helpers.reload 'minuet.utils'
+            local events = {}
+            local group = vim.api.nvim_create_augroup('MinuetUsageTest', { clear = true })
+            vim.api.nvim_create_autocmd('User', {
+                group = group,
+                pattern = 'MinuetRequestUsage',
+                callback = function(args)
+                    table.insert(events, args.data)
+                end,
+            })
+
+            local stdout = vim.json.encode {
+                choices = { { message = { content = 'hi' } } },
+                usage = { prompt_tokens = 50, completion_tokens = 4 },
+            }
+
+            local text = utils.no_stream_decode({ code = 0, stdout = stdout }, vim.fn.tempname(), 'Codestral', function(json)
+                return json.choices[1].message.content
+            end)
+            vim.api.nvim_del_augroup_by_id(group)
+
+            helpers.expect_equal(text, 'hi')
+            helpers.expect_equal(events, { { name = 'Codestral', input_tokens = 50, output_tokens = 4 } })
+        end,
+    },
+    {
         name = 'utils.trim_completion_items skips whitespace-only completion items',
         run = function()
             helpers.setup_root_config()

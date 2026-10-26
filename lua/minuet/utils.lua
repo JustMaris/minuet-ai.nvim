@@ -520,6 +520,20 @@ function M.make_chat_llm_shot(context, template)
     return results
 end
 
+---Reads the token counts from a decoded API response or stream chunk.
+---Understands the Claude (`input_tokens`/`output_tokens`) and OpenAI-style
+---(`prompt_tokens`/`completion_tokens`) field names.
+---@param json table
+---@return integer? input_tokens
+---@return integer? output_tokens
+local function get_usage(json)
+    local usage = json.usage or (type(json.message) == 'table' and json.message.usage)
+    if type(usage) ~= 'table' then
+        return
+    end
+    return usage.input_tokens or usage.prompt_tokens, usage.output_tokens or usage.completion_tokens
+end
+
 ---@param response vim.SystemCompleted
 function M.no_stream_decode(response, data_file, provider, get_text_fn)
     vim.uv.fs_unlink(data_file)
@@ -544,6 +558,11 @@ function M.no_stream_decode(response, data_file, provider, get_text_fn)
             )
         end
         return
+    end
+
+    local input_tokens, output_tokens = get_usage(json)
+    if input_tokens or output_tokens then
+        M.run_event('MinuetRequestUsage', { name = provider, input_tokens = input_tokens, output_tokens = output_tokens })
     end
 
     local result_str
@@ -573,6 +592,7 @@ function M.stream_decode(response, data_file, provider, get_text_fn)
 
     local result = {}
     local responses = vim.split(response.stdout or '', '\n', { plain = true, trimempty = false })
+    local input_tokens, output_tokens
 
     for _, line in ipairs(responses) do
         local success, json, text
@@ -583,6 +603,11 @@ function M.stream_decode(response, data_file, provider, get_text_fn)
             goto continue
         end
 
+        -- The input count is sent once; the output count is a running total, so the last one wins.
+        local chunk_input, chunk_output = get_usage(json)
+        input_tokens = chunk_input or input_tokens
+        output_tokens = chunk_output or output_tokens
+
         success, text = pcall(get_text_fn, json)
         if not success then
             goto continue
@@ -592,6 +617,10 @@ function M.stream_decode(response, data_file, provider, get_text_fn)
             table.insert(result, text)
         end
         ::continue::
+    end
+
+    if input_tokens or output_tokens then
+        M.run_event('MinuetRequestUsage', { name = provider, input_tokens = input_tokens, output_tokens = output_tokens })
     end
 
     local result_str = #result > 0 and table.concat(result) or nil
@@ -660,8 +689,13 @@ end
 ---@field request_idx? number the index of the current request
 ---@field timestamp number the timestamp of the event at MminuetRequestStartedPre
 
+---@class minuet.UsageEventData
+---@field name string the name of the provider
+---@field input_tokens? integer the number of input tokens, when the API reports it
+---@field output_tokens? integer the number of output tokens, when the API reports it
+
 ---@param event string The minuet event to run
----@param opts minuet.EventData The minuet data event
+---@param opts minuet.EventData|minuet.UsageEventData The minuet data event
 function M.run_event(event, opts)
     opts = opts or {}
     vim.api.nvim_exec_autocmds('User', { pattern = event, data = opts })
